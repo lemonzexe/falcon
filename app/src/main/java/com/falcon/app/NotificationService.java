@@ -167,13 +167,21 @@ public class NotificationService extends NotificationListenerService implements 
             } catch (Exception ignored) {
                 return;
             }
-
+            
             String appName = pkg;
-            try {
-                android.content.pm.PackageManager pm = getApplicationContext().getPackageManager();
-                appName = pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString();
-            } catch (Exception ignored) {}
+           try {
+               PackageManager pm = getPackageManager();
+               ApplicationInfo info = pm.getApplicationInfo(pkg, 0);
+               CharSequence label = pm.getApplicationLabel(info);
 
+               if (label != null) {
+                  appName = label.toString();
+               }
+               
+           } catch (Exception ignored) {
+               appName = pkg;
+           }         
+          
             Notification notification;
             Bundle extras;
             try {
@@ -222,7 +230,7 @@ public class NotificationService extends NotificationListenerService implements 
                     "disconnecting", "initializing", "starting", "finishing", "preparing",
                     "finalizing", "calculating", "analyzing", "indexing", "caching",
                     "retrying", "waiting", "pending", "queued", "resuming", "copying",
-                    "moving", "merging", "splitting", "remaining", "converting"
+                    "moving", "merging", "splitting", "remaining", "converting", "opening"
             );
 
             if ((allText.contains("%") || allText.matches(".*\\d+\\s*/\\s*\\d+.*"))
@@ -1199,11 +1207,13 @@ public class NotificationService extends NotificationListenerService implements 
                         long lastUsed = stats.getLastTimeUsed();
 
                         Map<String, Object> data = new HashMap<>();
-
+                  
                         String label = pkg;
                         try {
                             label = pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString();
-                        } catch (Throwable ignored) {}
+                        } catch (Exception ignored) {
+                            String label = pkg;
+                        }                  
 
                         data.put("appName", label);
                         data.put("package", pkg);
