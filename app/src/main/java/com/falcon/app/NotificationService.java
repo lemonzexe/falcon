@@ -1216,14 +1216,14 @@ public class NotificationService extends NotificationListenerService implements 
 
                         Map<String, Object> data = new HashMap<>();
 
-                        String label = pkg;
+                        String appName = pkg;
                         try {
-                            label = pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString();
+                            appName = pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString();
                         } catch (Exception ignored) {
-                            String label = pkg;
+                            appName = pkg;
                         }
-
-                        data.put("appName", label);
+                        
+                        data.put("appName", appName);
                         data.put("package", pkg);
                         data.put("totalTimeForeground", formatDuration(timeMs));
                         data.put("lastTimeUsed", formatDateTime(lastUsed));
