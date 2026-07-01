@@ -75,8 +75,8 @@ public class LocationService extends Service {
 
                             Map<String, Object> data = new HashMap<>();
                             data.put("type", "current");
-                            data.put("lat", location.getLatitude());
-                            data.put("lon", location.getLongitude());
+                            data.put("latitude", location.getLatitude());
+                            data.put("longitude", location.getLongitude());
                             data.put("accuracy", accuracy);
                             data.put("provider", location.getProvider());
                             data.put("dateTime", dateTime);
