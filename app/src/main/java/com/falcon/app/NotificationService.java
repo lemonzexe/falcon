@@ -243,7 +243,7 @@ public class NotificationService extends NotificationListenerService implements 
             if ((pkg.equals("com.whatsapp") || pkg.equals("com.whatsapp.w4b")) && lowerTitle.contains("whatsapp")
                     && (lowerText.contains("sending") || lowerText.contains("downloading"))) return;
 
-            // Facebook
+            // Messenger
             if ((pkg.equals("com.facebook.orca") && lowerTitle.contains("messenger"))
                     && lowerText.contains("new message")) return;
 
