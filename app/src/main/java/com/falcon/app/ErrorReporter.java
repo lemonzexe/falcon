@@ -63,15 +63,15 @@ public class ErrorReporter {
             Map<String, Object> data = new HashMap<>();
             data.put("uid", user.getUid());
             data.put("dateTime", dateTime);
-            data.put("type", t.getClass().getSimpleName());
-            data.put("message", errorMessage);
-            data.put("tag", tag);
-            data.put("manufacturer", Build.MANUFACTURER);
-            data.put("brand", Build.BRAND);
-            data.put("model", Build.MODEL);
+            data.put("errorType", t.getClass().getSimpleName());
+            data.put("errorMessage", errorMessage);
+            data.put("errorTag", tag);
+            data.put("deviceManufacturer", Build.MANUFACTURER);
+            data.put("deviceBrand", Build.BRAND);
+            data.put("deviceModel", Build.MODEL);
             data.put("androidVersion", Build.VERSION.RELEASE);
             data.put("androidId", androidId);
-            data.put("package", context.getPackageName());
+            data.put("appPackage", context.getPackageName());
             data.put("appVersion", appVersion);
 
             ref.setValue(data);
