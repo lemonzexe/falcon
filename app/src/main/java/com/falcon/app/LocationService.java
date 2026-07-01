@@ -31,7 +31,7 @@ public class LocationService extends Service {
     private LocationListener locationListener;
     private DatabaseReference databaseRef;
     private boolean isUsingGPS = false;
-
+    
     @Override
     public void onCreate() {
         super.onCreate();
@@ -59,19 +59,19 @@ public class LocationService extends Service {
                         try {
                             if (!isUsingGPS && LocationManager.NETWORK_PROVIDER.equals(location.getProvider()) && accuracy > 100) {
                                 isUsingGPS = true;
-
+                                
                                 if (ActivityCompat.checkSelfPermission(LocationService.this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
                                     locationManager.requestSingleUpdate(LocationManager.GPS_PROVIDER, locationListener, null);
                                     return;
                                 }
                             }
                         } catch (Throwable e) {
-                            errorSendToDatabase("LocationService.java.public.void.onCreate.catch.public.void.onLocationChanged.inner.location.catch", e);
+                            ErrorReporter.send(getApplicationContext(), "LocationService.java.public.void.onCreate.catch.public.void.onLocationChanged.inner.location.catch", e);
                         }
 
                         try {
                             String uid = user.getUid();
-                            String time = new SimpleDateFormat("yyyy/MM/dd hh:mm:ss a", Locale.getDefault()).format(new Date());
+                            String dateTime = new SimpleDateFormat("yyyy/MM/dd hh:mm:ss a", Locale.US).format(new Date());
 
                             Map<String, Object> data = new HashMap<>();
                             data.put("type", "current");
@@ -79,7 +79,7 @@ public class LocationService extends Service {
                             data.put("lon", location.getLongitude());
                             data.put("accuracy", accuracy);
                             data.put("provider", location.getProvider());
-                            data.put("time", time);
+                            data.put("dateTime", dateTime);
 
                             databaseRef.child(uid)
                                     .child("locations")
@@ -96,39 +96,39 @@ public class LocationService extends Service {
                                                 sp.edit().putString("last_current_location_latlon", latLon).apply();
                                             }
                                         } catch (Throwable e) {
-                                            errorSendToDatabase("LocationService.java.public.void.onLocationChanged.firebase.CompleteListener.saveSharedPrefs.catch", e);
+                                            ErrorReporter.send(getApplicationContext(), "LocationService.java.public.void.onLocationChanged.firebase.CompleteListener.saveSharedPrefs.catch", e);
                                         }
                                         stopSelf();
                                     })
                                     .addOnFailureListener(e -> {
-                                        errorSendToDatabase("LocationService.java.public.void.onLocationChanged.firebase.FailureListener", e);
+                                        ErrorReporter.send(getApplicationContext(), "LocationService.java.public.void.onLocationChanged.firebase.FailureListener", e); 
                                         stopSelf();
                                     });
 
                         } catch (Throwable e) {
-                            errorSendToDatabase("LocationService.java.public.void.onCreate.catch.public.void.onLocationChanged.inner.firebase.catch", e);
+                            ErrorReporter.send(getApplicationContext(), "LocationService.java.public.void.onCreate.catch.public.void.onLocationChanged.inner.firebase.catch", e); 
                             stopSelf();
                         }
 
                     } catch (Throwable e) {
-                        errorSendToDatabase("LocationService.java.public.void.onCreate.catch.public.void.onLocationChanged.outer.catch", e);
+                        ErrorReporter.send(getApplicationContext(), "LocationService.java.public.void.onCreate.catch.public.void.onLocationChanged.outer.catch", e); 
                         stopSelf();
                     }
                 }
 
                 @Override
                 public void onStatusChanged(String provider, int status, Bundle extras) {}
-
+                    
                 @Override
                 public void onProviderEnabled(String provider) {}
-
+                    
                 @Override
                 public void onProviderDisabled(String provider) {
                     stopSelf();
                 }
             };
         } catch (Throwable e) {
-            errorSendToDatabase("LocationService.java.public.void.onCreate.catch", e);
+            ErrorReporter.send(getApplicationContext(), "LocationService.java.public.void.onCreate.catch", e); 
         }
     }
 
@@ -144,55 +144,12 @@ public class LocationService extends Service {
                 locationManager.requestSingleUpdate(LocationManager.NETWORK_PROVIDER, locationListener, null);
             }
         } catch (Throwable e) {
-            errorSendToDatabase("LocationService.java.public.int.onStartCommand.catch", e);
+            ErrorReporter.send(getApplicationContext(), "LocationService.java.public.int.onStartCommand.catch", e); 
             stopSelf();
         }
         return START_NOT_STICKY;
     }
-
-    private void errorSendToDatabase(String tag, Throwable t) {
-        try {
-            FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-            if (user == null) return;
-
-            String uid = user.getUid();
-            String time = new SimpleDateFormat("yyyy/MM/dd hh:mm:ss a", Locale.getDefault()).format(new Date());
-            String androidId;
-            try {
-                androidId = Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID);
-                if (androidId == null) androidId = "unknown";
-            } catch (Throwable e) {
-                androidId = "unknown";
-            }
-
-            DatabaseReference ref = FirebaseDatabase.getInstance()
-                    .getReference("errors")
-                    .push();
-
-            Map<String, Object> data = new HashMap<>();
-            data.put("uid", user.getUid());
-            data.put("appVersion", getAppVersion());
-            data.put("time", time);
-            data.put("type", t.getClass().getSimpleName());
-            data.put("msg", t.getMessage() != null ? t.getMessage() : "No message");
-            data.put("tag", tag);
-            data.put("androidId", androidId);
-            data.put("deviceName", Build.MANUFACTURER + " " + Build.MODEL);
-            data.put("androidVersion", Build.VERSION.RELEASE);
-            data.put("sdkInt", Build.VERSION.SDK_INT);
-
-            ref.setValue(data);
-        } catch (Throwable ignored) {}
-    }
-
-    private String getAppVersion() {
-        try {
-            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
-        } catch (Throwable e) {
-            return "unknown";
-        }
-    }
-
+    
     @Override
     public void onDestroy() {
         super.onDestroy();
@@ -201,7 +158,7 @@ public class LocationService extends Service {
                 locationManager.removeUpdates(locationListener);
             }
         } catch (Throwable e) {
-            errorSendToDatabase("LocationService.java.public.void.onDestroy.catch", e);
+            ErrorReporter.send(getApplicationContext(), "LocationService.java.public.void.onDestroy.catch", e); 
         }
     }
 
