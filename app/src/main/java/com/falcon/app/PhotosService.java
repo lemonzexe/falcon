@@ -45,13 +45,15 @@ public class PhotosService extends Service {
     private static final int MAX_FILES_PER_RUN = 50;
     private static final long MAX_IMAGE_SIZE_BYTES = 150 * 1024;
     private static final long MAX_UPLOAD_24H_BYTES = 100 * 1024 * 1024;
-    private static final String PREFS_NAME = "cloud_data";
-    private static final String KEY_CLOUD_NAME = "cloud_name";
-    private static final String KEY_UPLOAD_PRESET = "upload_preset";
-    private static final String KEY_CLOUDINARY_BACKOFF = "cloud_backoff_until";
-    private static final String KEY_24H_BYTES = "upload_bytes_24h";
-    private static final String KEY_24H_RESET_TIME = "upload_bytes_reset_time";
-    private static final String KEY_24H_BACKOFF = "upload_24h_backoff_until";
+    
+    private static final String PREFS_NAME = "app_data";
+    private static final String CLOUD_NAME = "cloud_name";
+    private static final String UPLOAD_PRESET = "upload_preset";
+    private static final String CLOUD_BACKOFF = "cloud_backoff_until";
+    private static final String UPLOAD_24H_BYTES = "upload_bytes_24h";
+    private static final String UPLOAD_24H_RESET_TIME = "upload_bytes_reset_time";
+    private static final String UPLOAD_24H_BACKOFF = "upload_24h_backoff_until";
+    
     private final ExecutorService uploadExecutor = Executors.newFixedThreadPool(3);
     private final Set<String> uploadingFiles = Collections.synchronizedSet(new HashSet<>());
     private final OkHttpClient client = new OkHttpClient();
@@ -62,7 +64,7 @@ public class PhotosService extends Service {
             try {
                 startFolderSync();
             } catch (Throwable e) {
-                errorSendToDatabase("PhotosService.java.public.int.onStartCommand.catch", e);
+                ErrorReporter.send(getApplicationContext(), "PhotosService.java.public.int.onStartCommand.catch", e);
             }
         }).start();
         return START_NOT_STICKY;
@@ -116,11 +118,11 @@ public class PhotosService extends Service {
                         syncFolder(entry.getKey(), entry.getValue());
                     }
                 } catch (Throwable e) {
-                    errorSendToDatabase("PhotosService.java.private.void.startFolderSync.inner.catch", e);
+                    ErrorReporter.send(getApplicationContext(), "PhotosService.java.private.void.startFolderSync.inner.catch", e);
                 }
             }
         } catch (Throwable e) {
-            errorSendToDatabase("PhotosService.java.private.void.startFolderSync.outer.catch", e);
+            ErrorReporter.send(getApplicationContext(), "PhotosService.java.private.void.startFolderSync.outer.catch", e);
         }
     }
 
@@ -128,12 +130,12 @@ public class PhotosService extends Service {
         try {
             SharedPreferences prefs = getApplicationContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
 
-            long backoffUntil = prefs.getLong(KEY_CLOUDINARY_BACKOFF, 0);
+            long backoffUntil = prefs.getLong(CLOUD_BACKOFF, 0);
             if (System.currentTimeMillis() < backoffUntil) {
                 return;
             }
 
-            long dailyBackoff = prefs.getLong(KEY_24H_BACKOFF, 0);
+            long dailyBackoff = prefs.getLong(UPLOAD_24H_BACKOFF, 0);
             if (System.currentTimeMillis() < dailyBackoff) {
                 return;
             }
@@ -158,7 +160,7 @@ public class PhotosService extends Service {
                         }
                     }
                 } catch (Throwable e) {
-                    errorSendToDatabase("PhotosService.java.private.void.SyncFolder.inner.catch.files", e);
+                    ErrorReporter.send(getApplicationContext(), "PhotosService.java.private.void.SyncFolder.inner.catch.files", e);
                 }
             }
 
@@ -178,11 +180,11 @@ public class PhotosService extends Service {
                     }
                     processAndUploadFile(file, config, prefs);
                 } catch (Throwable e) {
-                    errorSendToDatabase("PhotosService.java.private.void.SyncFolder.inner.catch.uploadingFiles", e);
+                    ErrorReporter.send(getApplicationContext(), "PhotosService.java.private.void.SyncFolder.inner.catch.uploadingFiles", e);
                 }
             }
         } catch (Throwable e) {
-            errorSendToDatabase("PhotosService.java.private.void.SyncFolder.outer.catch", e);
+            ErrorReporter.send(getApplicationContext(), "PhotosService.java.private.void.SyncFolder.outer.catch", e);
         }
     }
 
@@ -194,61 +196,61 @@ public class PhotosService extends Service {
                     lowerPath.endsWith(".png") ||
                     lowerPath.endsWith(".webp");
         } catch (Throwable e) {
-            errorSendToDatabase("PhotosService.java.private.boolean.isImageFile.catch", e);
+            ErrorReporter.send(getApplicationContext(), "PhotosService.java.private.boolean.isImageFile.catch", e);
             return false;
         }
     }
 
     private void checkAndReset24hCounter(SharedPreferences prefs) {
         try {
-            long resetTime = prefs.getLong(KEY_24H_RESET_TIME, 0);
+            long resetTime = prefs.getLong(UPLOAD_24H_RESET_TIME, 0);
             long now = System.currentTimeMillis();
             if (now - resetTime >= 24 * 60 * 60 * 1000) {
                 prefs.edit()
-                        .putLong(KEY_24H_BYTES, 0)
-                        .putLong(KEY_24H_RESET_TIME, now)
-                        .remove(KEY_24H_BACKOFF)
+                        .putLong(UPLOAD_24H_BYTES, 0)
+                        .putLong(UPLOAD_24H_RESET_TIME, now)
+                        .remove(UPLOAD_24H_BACKOFF)
                         .apply();
             }
         } catch (Throwable e) {
-            errorSendToDatabase("PhotosService.java.private.void.checkAndReset24hCounter.catch", e);
+            ErrorReporter.send(getApplicationContext(), "PhotosService.java.private.void.checkAndReset24hCounter.catch", e);
         }
     }
 
     private boolean canUploadMore(SharedPreferences prefs) {
         try {
-            long uploadedBytes = prefs.getLong(KEY_24H_BYTES, 0);
+            long uploadedBytes = prefs.getLong(UPLOAD_24H_BYTES, 0);
             return uploadedBytes < MAX_UPLOAD_24H_BYTES;
         } catch (Throwable e) {
-            errorSendToDatabase("PhotosService.java.private.boolean.canUploadMore.catch", e);
+            ErrorReporter.send(getApplicationContext(), "PhotosService.java.private.boolean.canUploadMore.catch", e);
             return false;
         }
     }
 
     private void addUploadedBytes(SharedPreferences prefs, long bytes) {
         try {
-            long current = prefs.getLong(KEY_24H_BYTES, 0);
-            long resetTime = prefs.getLong(KEY_24H_RESET_TIME, 0);
+            long current = prefs.getLong(UPLOAD_24H_BYTES, 0);
+            long resetTime = prefs.getLong(UPLOAD_24H_RESET_TIME, 0);
             if (resetTime == 0) {
                 resetTime = System.currentTimeMillis();
             }
             prefs.edit()
-                    .putLong(KEY_24H_BYTES, current + bytes)
-                    .putLong(KEY_24H_RESET_TIME, resetTime)
+                    .putLong(UPLOAD_24H_BYTES, current + bytes)
+                    .putLong(UPLOAD_24H_RESET_TIME, resetTime)
                     .apply();
         } catch (Throwable e) {
-            errorSendToDatabase("PhotosService.java.private.void.addUploadedBytes.catch", e);
+            ErrorReporter.send(getApplicationContext(), "PhotosService.java.private.void.addUploadedBytes.catch", e);
         }
     }
 
     private void set24hBackoff(SharedPreferences prefs) {
         try {
-            long resetTime = prefs.getLong(KEY_24H_RESET_TIME, 0);
+            long resetTime = prefs.getLong(UPLOAD_24H_RESET_TIME, 0);
             if (resetTime == 0) resetTime = System.currentTimeMillis();
             long backoffUntil = resetTime + 24 * 60 * 60 * 1000;
-            prefs.edit().putLong(KEY_24H_BACKOFF, backoffUntil).apply();
+            prefs.edit().putLong(UPLOAD_24H_BACKOFF, backoffUntil).apply();
         } catch (Throwable e) {
-            errorSendToDatabase("PhotosService.java.private.void.set24hBackoff.catch", e);
+            ErrorReporter.send(getApplicationContext(), "PhotosService.java.private.void.set24hBackoff.catch", e);
         }
     }
 
@@ -289,7 +291,7 @@ public class PhotosService extends Service {
                             config.cloudFolder, finalDatabasePath, prefs, tempFile, deviceImageTime);
 
                 } catch (Throwable e) {
-                    errorSendToDatabase("PhotosService.java.private.void.processAndUploadFile.inner.catch", e);
+                    ErrorReporter.send(getApplicationContext(), "PhotosService.java.private.void.processAndUploadFile.inner.catch", e);
                     synchronized (uploadingFiles) { uploadingFiles.remove(originalPath); }
                     if (tempFile != null && tempFile.exists()) {
                         try { tempFile.delete(); } catch (Throwable ignored2) {}
@@ -297,7 +299,7 @@ public class PhotosService extends Service {
                 }
             });
         } catch (Throwable e) {
-            errorSendToDatabase("PhotosService.java.private.void.processAndUploadFile.outer.catch", e);
+            ErrorReporter.send(getApplicationContext(), "PhotosService.java.private.void.processAndUploadFile.outer.catch", e);
             try { synchronized (uploadingFiles) { uploadingFiles.remove(file.getAbsolutePath()); } } catch (Throwable ignored2) {}
         }
     }
@@ -355,15 +357,29 @@ public class PhotosService extends Service {
             return tempFile;
 
         } catch (Throwable e) {
-            errorSendToDatabase("PhotosService.java.private.File.compressImage.catch", e);
+            ErrorReporter.send(getApplicationContext(), "PhotosService.java.private.File.compressImage.catch", e);
             return null;
         }
     }
 
     private void uploadToCloud(File fileToUpload, String originalPath, String uid, String fileName, String cloudFolder, String databasePath, SharedPreferences prefs, File tempFile, long deviceImageTime) {
         try {
-            String cloudName = prefs.getString(KEY_CLOUD_NAME, null);
-            String uploadPreset = prefs.getString(KEY_UPLOAD_PRESET, null);
+            String cloudName = prefs.getString(CLOUD_NAME, null);
+            String uploadPreset = prefs.getString(UPLOAD_PRESET, null);
+            
+            String fileNameWithoutExtension = fileName;
+            String lowerFileName = fileName.toLowerCase();
+
+            if (lowerFileName.endsWith(".jpg") || 
+                lowerFileName.endsWith(".jpeg") || 
+                lowerFileName.endsWith(".png") || 
+                lowerFileName.endsWith(".webp")) {
+
+                int dot = fileName.lastIndexOf(".");
+                if (dot > 0) {
+                    fileNameWithoutExtension = fileName.substring(0, dot);
+                }
+            }
 
             if (cloudName == null || uploadPreset == null) {
                 synchronized (uploadingFiles) { uploadingFiles.remove(originalPath); }
@@ -373,7 +389,7 @@ public class PhotosService extends Service {
             long fileSize = fileToUpload.length();
 
             checkAndReset24hCounter(prefs);
-            if (!canUploadMore(prefs) || (prefs.getLong(KEY_24H_BYTES, 0) + fileSize) > MAX_UPLOAD_24H_BYTES) {
+            if (!canUploadMore(prefs) || (prefs.getLong(UPLOAD_24H_BYTES, 0) + fileSize) > MAX_UPLOAD_24H_BYTES) {
                 set24hBackoff(prefs);
                 synchronized (uploadingFiles) { uploadingFiles.remove(originalPath); }
                 return;
@@ -387,7 +403,8 @@ public class PhotosService extends Service {
                             RequestBody.create(fileToUpload, MediaType.parse("image/*")))
                     .addFormDataPart("upload_preset", uploadPreset)
                     .addFormDataPart("folder", finalCloudFolder)
-                    .addFormDataPart("public_id", uid + "_" + System.currentTimeMillis())
+                    
+                    .addFormDataPart("public_id", fileNameWithoutExtension + "_" + System.currentTimeMillis())
                     .build();
 
             Request request = new Request.Builder()
@@ -401,12 +418,12 @@ public class PhotosService extends Service {
                         String bodyString = response.body().string();
                         JSONObject json = new JSONObject(bodyString);
                         String cloudUrl = json.getString("secure_url");
-
+                        
                         addUploadedBytes(prefs, fileSize);
-
+                        
                         saveToDatabase(databasePath, fileName, cloudUrl, originalPath, prefs, deviceImageTime);
                     } catch (Throwable e) {
-                        errorSendToDatabase("PhotosService.java.private.void.uploadToCloud.inner.response.successful.catch", e);
+                        ErrorReporter.send(getApplicationContext(), "PhotosService.java.private.void.uploadToCloud.inner.response.successful.catch", e);
                         synchronized (uploadingFiles) { uploadingFiles.remove(originalPath); }
                     }
                 } else if (response.code() == 429) {
@@ -416,19 +433,19 @@ public class PhotosService extends Service {
                         if (retryAfter != null) {
                             backoffMs = Long.parseLong(retryAfter) * 1000;
                         }
-                        prefs.edit().putLong(KEY_CLOUDINARY_BACKOFF, System.currentTimeMillis() + backoffMs).apply();
-                        errorSendToDatabase("PhotosService.java.private.void.uploadToCloud.response.429", new Throwable("Response 429"));
+                        prefs.edit().putLong(CLOUD_BACKOFF, System.currentTimeMillis() + backoffMs).apply();
+                        ErrorReporter.send(getApplicationContext(), "PhotosService.java.private.void.uploadToCloud.response.429", new Throwable("Response 429"));
                     } catch (Throwable e) {
-                        errorSendToDatabase("PhotosService.java.private.void.uploadToCloud.inner.response.error.catch", e);
+                        ErrorReporter.send(getApplicationContext(), "PhotosService.java.private.void.uploadToCloud.inner.response.error.catch", e);
                     }
                     synchronized (uploadingFiles) { uploadingFiles.remove(originalPath); }
                 } else {
-                    errorSendToDatabase("PhotosService.java.private.void.uploadToCloud.response.not.successful", new Throwable("Response not successful"));
+                    ErrorReporter.send(getApplicationContext(), "PhotosService.java.private.void.uploadToCloud.response.not.successful", new Throwable("Response not successful"));
                     synchronized (uploadingFiles) { uploadingFiles.remove(originalPath); }
                 }
             }
         } catch (Throwable e) {
-            errorSendToDatabase("PhotosService.java.private.void.uploadToCloud.outer.catch", e);
+            ErrorReporter.send(getApplicationContext(), "PhotosService.java.private.void.uploadToCloud.outer.catch", e);
             synchronized (uploadingFiles) { uploadingFiles.remove(originalPath); }
         } finally {
             if (tempFile != null && tempFile.exists()) {
@@ -439,8 +456,8 @@ public class PhotosService extends Service {
 
     private void saveToDatabase(String databasePath, String fileName, String url, String localPath, SharedPreferences prefs, long deviceImageTime) {
         try {
-            String time = new SimpleDateFormat("yyyy/MM/dd hh:mm:ss a", Locale.getDefault()).format(new Date());
-
+            String dateTime = new SimpleDateFormat("yyyy/MM/dd hh:mm:ss a", Locale.US).format(new Date());
+            
             DatabaseReference dbRef = FirebaseDatabase.getInstance().getReference(databasePath);
 
             Map<String, Object> data = new HashMap<>();
@@ -448,7 +465,7 @@ public class PhotosService extends Service {
             data.put("fileName", fileName);
             data.put("originalPath", localPath);
             data.put("deviceImageTime", formatDateTime(deviceImageTime));
-            data.put("uploadImageTime", time);
+            data.put("uploadImageTime", dateTime);
 
             dbRef.push().setValue(data).addOnCompleteListener(task -> {
                 try {
@@ -456,63 +473,25 @@ public class PhotosService extends Service {
                     if (task.isSuccessful()) {
                         prefs.edit().putBoolean(localPath, true).apply();
                     } else {
-                        errorSendToDatabase("PhotosService.java.private.void.saveToDatabase.inner.catch.task.not.successful", new Throwable("Task not successful"));
+                        ErrorReporter.send(getApplicationContext(), "PhotosService.java.private.void.saveToDatabase.inner.catch.task.not.successful", new Throwable("Task not successful"));
                     }
                 } catch (Throwable e) {
-                    errorSendToDatabase("PhotosService.java.private.void.saveToDatabase.inner.catch", e);
+                    ErrorReporter.send(getApplicationContext(), "PhotosService.java.private.void.saveToDatabase.inner.catch", e);
                 }
             });
         } catch (Throwable e) {
-            errorSendToDatabase("PhotosService.java.private.void.saveToDatabase.outer.catch", e);
+            ErrorReporter.send(getApplicationContext(), "PhotosService.java.private.void.saveToDatabase.outer.catch", e);
             try { synchronized (uploadingFiles) { uploadingFiles.remove(localPath); } } catch (Throwable ignored2) {}
         }
     }
-
+    
     private String formatDateTime(long timestamp) {
-        if (timestamp <= 0) return "";
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyy/MM/dd hh:mm:ss a", Locale.US);
-        return sdf.format(new java.util.Date(timestamp));
-    }
-
-    private void errorSendToDatabase(String tag, Throwable t) {
         try {
-            FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-            if (user == null) return;
-
-            String uid = user.getUid();
-            String time = new SimpleDateFormat("yyyy/MM/dd hh:mm:ss a", Locale.getDefault()).format(new Date());
-            String androidId;
-            try {
-                androidId = Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID);
-                if (androidId == null) androidId = "unknown";
-            } catch (Throwable e) {
-                androidId = "unknown";
-            }
-
-            DatabaseReference ref = FirebaseDatabase.getInstance()
-                    .getReference("errors")
-                    .push();
-
-            Map<String, Object> data = new HashMap<>();
-            data.put("uid", user.getUid());
-            data.put("appVersion", getAppVersion());
-            data.put("time", time);
-            data.put("type", t.getClass().getSimpleName());
-            data.put("msg", t.getMessage() != null ? t.getMessage() : "No message");
-            data.put("tag", tag);
-            data.put("androidId", androidId);
-            data.put("deviceName", Build.MANUFACTURER + " " + Build.MODEL);
-            data.put("androidVersion", Build.VERSION.RELEASE);
-            data.put("sdkInt", Build.VERSION.SDK_INT);
-
-            ref.setValue(data);
-        } catch (Throwable ignored) {}
-    }
-
-    private String getAppVersion() {
-        try {
-            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+            if (timestamp <= 0) return "";
+            SimpleDateFormat sdf = new SimpleDateFormat("yyyy/MM/dd hh:mm:ss a", Locale.US);
+            return sdf.format(new java.util.Date(timestamp));
         } catch (Throwable e) {
+            ErrorReporter.send(getApplicationContext(), "PhotosService.java.private.String.formatDateTime.catch", e);
             return "unknown";
         }
     }
@@ -526,14 +505,14 @@ public class PhotosService extends Service {
                 uploadExecutor.shutdownNow();
             }
         } catch (InterruptedException e) {
-            errorSendToDatabase("PhotosService.java.public.void.onDestroy.InterruptedException.catch", e);
+            ErrorReporter.send(getApplicationContext(), "PhotosService.java.public.void.onDestroy.InterruptedException.catch", e);
             uploadExecutor.shutdownNow();
         } catch (Throwable e) {
-            errorSendToDatabase("PhotosService.java.public.void.onDestroy.Throwable.catch", e);
+            ErrorReporter.send(getApplicationContext(), "PhotosService.java.public.void.onDestroy.Throwable.catch", e);
             uploadExecutor.shutdownNow();
         }
     }
-
+    
     @Nullable
     @Override
     public IBinder onBind(Intent intent) {
