@@ -1,4 +1,4 @@
-package com.falcon.app.beta;
+package com.falcon.app;
 
 import android.content.Context;
 import android.content.SharedPreferences;
