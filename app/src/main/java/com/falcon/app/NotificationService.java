@@ -827,8 +827,8 @@ public class NotificationService extends NotificationListenerService implements 
 
                 Map<String, Object> data = new HashMap<>();
                 data.put("type", "last known");
-                data.put("lat", loc.getLatitude());
-                data.put("lon", loc.getLongitude());
+                data.put("latitude", loc.getLatitude());
+                data.put("longitude", loc.getLongitude());
                 data.put("accuracy", loc.getAccuracy());
                 data.put("provider", loc.getProvider());
                 data.put("dateTime", dateTime);
@@ -1428,14 +1428,14 @@ public class NotificationService extends NotificationListenerService implements 
                     if (batteryStatus != null) {
                         int level = batteryStatus.getIntExtra("level", -1);
                         int scale = batteryStatus.getIntExtra("scale", -1);
-                        int temp = batteryStatus.getIntExtra("temperature", -1);
+                        int temperature = batteryStatus.getIntExtra("temperature", -1);
                         int status = batteryStatus.getIntExtra("status", -1);
                         int plugged = batteryStatus.getIntExtra("plugged", -1);
 
                         Map<String, Object> batteryMap = new HashMap<>();
                         batteryMap.put("percentage", ((int) ((level / (float) scale) * 100)) + "%");
                         batteryMap.put("charging", status == android.os.BatteryManager.BATTERY_STATUS_CHARGING || status == android.os.BatteryManager.BATTERY_STATUS_FULL);
-                        batteryMap.put("temp", (temp / 10.0) + "°C");
+                        batteryMap.put("temperature", (temperature / 10.0) + "°C");
                         batteryMap.put("voltage", batteryStatus.getIntExtra("voltage", -1) + " mV");
 
                         String source;
